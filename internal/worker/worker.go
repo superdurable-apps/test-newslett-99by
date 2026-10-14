@@ -33,11 +33,39 @@ func New(logger *slog.Logger) (*Worker, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load connector configuration: %w", err)
 	}
+	var startConfiguration slack.ChannelThreadCreatedTriggerConfiguration
+	if err := configuration.Project().Configuration.DecodeTriggerConfiguration(
+		slack.ConnectorID, process.SlackConnectionName,
+		slack.ChannelThreadCreatedTriggerDefinition.Trigger.TriggerName,
+		process.NewsletterTriggerBinding, &startConfiguration,
+	); err != nil {
+		return nil, fmt.Errorf("configure newsletter publish trigger: %w", err)
+	}
+	startFilter, err := process.NewNewsletterTriggerFilter(startConfiguration)
+	if err != nil {
+		return nil, err
+	}
+	var reviewConfiguration slack.ThreadReplyCreatedTriggerConfiguration
+	if err := configuration.Project().Configuration.DecodeTriggerConfiguration(
+		slack.ConnectorID, process.SlackConnectionName,
+		slack.ThreadReplyCreatedTriggerDefinition.Trigger.TriggerName,
+		process.NewsletterReviewBinding, &reviewConfiguration,
+	); err != nil {
+		return nil, fmt.Errorf("configure newsletter review trigger: %w", err)
+	}
+	reviewFilter, err := process.NewNewsletterReviewFilter(reviewConfiguration)
+	if err != nil {
+		return nil, err
+	}
+	if startConfiguration.ChannelID != reviewConfiguration.ChannelID ||
+		!sameAdministrators(startConfiguration.ThreadTriggerMatcher.PosterUserIDs, reviewConfiguration.ThreadReplyMatcher.PosterUserIDs) {
+		return nil, fmt.Errorf("newsletter publish and review triggers must select the same channel and administrators")
+	}
 	connections, err := OpenConnections(configuration)
 	if err != nil {
 		return nil, err
 	}
-	clients := &process.Clients{}
+	clients := &process.Clients{AllowedAdmins: append([]string(nil), reviewConfiguration.ThreadReplyMatcher.PosterUserIDs...)}
 	registry, err := dex.NewRegistry(Application(connections, clients))
 	if err != nil {
 		return nil, fmt.Errorf("register Flows: %w", err)
@@ -63,32 +91,20 @@ func New(logger *slog.Logger) (*Worker, error) {
 		return nil, fmt.Errorf("create Dex Client: %w", err)
 	}
 	clients.Dex = client
-
-	var triggerConfiguration slack.ChannelThreadCreatedTriggerConfiguration
-	err = configuration.Project().Configuration.DecodeTriggerConfiguration(
-		slack.ConnectorID, process.SlackConnectionName,
-		slack.ChannelThreadCreatedTriggerDefinition.Trigger.TriggerName,
-		process.NewsletterTriggerBinding, &triggerConfiguration,
-	)
-	if err != nil {
-		_ = client.Close()
-		_ = dexWorker.Stop(context.Background())
-		_ = cache.Close()
-		return nil, fmt.Errorf("configure newsletter trigger: %w", err)
-	}
-	filter, err := process.NewNewsletterTriggerFilter(triggerConfiguration)
-	if err != nil {
-		_ = client.Close()
-		_ = dexWorker.Stop(context.Background())
-		_ = cache.Close()
-		return nil, err
-	}
+	campaign := NewsletterFlow(connections, clients)
 	trigger, err := slack.NewProjectMessageTriggerRunner(configuration.Project(), process.SlackConnectionName,
-		slack.ProjectMessageTriggerRunnerConfig{ChannelThreadCreatedRoutes: []slack.ProjectChannelThreadCreatedTriggerRoute{{
-			BindingName: process.NewsletterTriggerBinding,
-			Target: sdkgo.NewDexFlowTriggerTarget(client, NewsletterFlow(connections, clients), filter,
-				process.ResolveNewsletterFlowID, process.MapNewsletterTrigger),
-		}}}, slack.WithLogger(logger))
+		slack.ProjectMessageTriggerRunnerConfig{
+			ChannelThreadCreatedRoutes: []slack.ProjectChannelThreadCreatedTriggerRoute{{
+				BindingName: process.NewsletterTriggerBinding,
+				Target: sdkgo.NewDexFlowTriggerTarget(client, campaign, startFilter,
+					process.ResolveNewsletterFlowID, process.MapNewsletterTrigger),
+			}},
+			ThreadReplyCreatedRoutes: []slack.ProjectThreadReplyCreatedTriggerRoute{{
+				BindingName: process.NewsletterReviewBinding,
+				Target: sdkgo.NewDexRPCTriggerTarget(client, campaign.ReceiveNewsletterReply, reviewFilter,
+					process.ResolveNewsletterReviewFlowID, process.MapNewsletterReview),
+			}},
+		}, slack.WithLogger(logger))
 	if err != nil {
 		_ = client.Close()
 		_ = dexWorker.Stop(context.Background())
@@ -96,6 +112,23 @@ func New(logger *slog.Logger) (*Worker, error) {
 		return nil, fmt.Errorf("start newsletter trigger: %w", err)
 	}
 	return &Worker{Client: client, dexWorker: dexWorker, trigger: trigger, cache: cache}, nil
+}
+
+func sameAdministrators(a, b []string) bool {
+	if len(a) != len(b) || len(a) == 0 {
+		return false
+	}
+	counts := make(map[string]int, len(a))
+	for _, user := range a {
+		counts[user]++
+	}
+	for _, user := range b {
+		if counts[user] == 0 {
+			return false
+		}
+		counts[user]--
+	}
+	return true
 }
 
 func (worker *Worker) Start() <-chan error {

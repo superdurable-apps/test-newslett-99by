@@ -87,11 +87,11 @@ components:
     Newsletter:
       type: object
       additionalProperties: false
-      required: [status, subject, report, releaseCount, recipientCount, sentCount, failedCount, unknownCount, notice]
+      required: [status, subject, report, releaseCount, recipientCount, sentCount, failedCount, unknownCount, notice, draftRevision, draftTimestamp]
       properties:
         status:
           type: string
-          enum: [pending, collecting_releases, release_failed, generation_failed, generation_unknown, sending, completed]
+          enum: [pending, collecting_releases, release_failed, generation_failed, generation_unknown, posting_draft, awaiting_approval, revising, approved, draft_failed, draft_unknown, sending, completed]
         subject:
           type: string
         report:
@@ -112,6 +112,11 @@ components:
           type: integer
           format: int64
         notice:
+          type: string
+        draftRevision:
+          type: integer
+          format: int64
+        draftTimestamp:
           type: string
     ErrorResponse:
       type: object

@@ -4,6 +4,7 @@ package apptest_test
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -26,10 +27,20 @@ import (
 	"github.com/superdurable/dex/sdk-go/dex"
 )
 
+type slackOperations struct {
+	slack.Operations
+	post *connectormock.Mutation[slack.PostThreadReplyInput, slack.PostMessageOutput]
+}
+
+func (operations slackOperations) PostThreadReply() sdkgo.Mutation[slack.PostThreadReplyInput, slack.PostMessageOutput] {
+	return operations.post
+}
+
 type mocks struct {
 	github *githubmock.Mock
 	model  *llmmock.Mock
 	gmail  *gmailmock.Mock
+	slack  *connectormock.Mutation[slack.PostThreadReplyInput, slack.PostMessageOutput]
 }
 
 func newMocks(t *testing.T) (worker.Connections, mocks) {
@@ -40,7 +51,17 @@ func newMocks(t *testing.T) (worker.Connections, mocks) {
 	gh.ListReleases().Default(githubmock.ListReleasesNoReleases())
 	model.GenerateText().Default(llmmock.GenerateTextShortSummary())
 	mail.SendMessage().Default(gmailmock.SendMessageSentToCustomer())
-	return worker.Connections{GitHub: gh.Connection(), OpenAI: model.Connection(), Gmail: mail.Connection()}, mocks{github: gh, model: model, gmail: mail}
+	post := connectormock.NewMutation[slack.PostThreadReplyInput, slack.PostMessageOutput](t, slack.PostThreadReplyDefinition)
+	post.Default(slackDraftSent("9999999999.000001"))
+	slackConnection, err := slack.NewConnectionWithOperations(slackOperations{post: post}, sdkgo.ConnectionRef{Provider: "slack", Name: process.SlackConnectionName})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return worker.Connections{GitHub: gh.Connection(), OpenAI: model.Connection(), Gmail: mail.Connection(), Slack: slackConnection}, mocks{github: gh, model: model, gmail: mail, slack: post}
+}
+
+func slackDraftSent(timestamp string) connectormock.Case[slack.PostMessageOutput] {
+	return connectormock.Branch(slack.PostThreadReplyBranchSent, slack.PostMessageOutput{Message: slack.Message{ChannelID: "C123", Timestamp: timestamp}}, nil)
 }
 
 func subscribe(t *testing.T, env *apptest.Env, email string, requestID uuid.UUID) {
@@ -71,7 +92,7 @@ func awaitSubscriberCount(t *testing.T, env *apptest.Env, count int64) {
 }
 
 func campaignInput() process.NewsletterCampaignInput {
-	return process.NewsletterCampaignInput{EventID: uuid.NewString(), TeamID: "T123", ChannelID: "C123", Timestamp: uuid.NewString(), UserID: "UADMIN"}
+	return process.NewsletterCampaignInput{EventID: uuid.NewString(), TeamID: "T123", ChannelID: "C123", Timestamp: fmt.Sprintf("%d.%06d", time.Now().Unix(), time.Now().UnixNano()%1000000), UserID: "UADMIN"}
 }
 
 func startCampaign(t *testing.T, env *apptest.Env, input process.NewsletterCampaignInput) string {
@@ -98,6 +119,27 @@ func awaitCampaign(t *testing.T, env *apptest.Env, id string, status generated.N
 		return read.Status == status
 	})
 	return latest
+}
+
+func reviewCampaign(t *testing.T, env *apptest.Env, id string, mock mocks, message, timestamp string) process.NewsletterReviewReceipt {
+	t.Helper()
+	draft := awaitCampaign(t, env, id, generated.NewsletterStatusAwaitingApproval)
+	if draft.DraftTimestamp == "" || len(mock.gmail.SendMessage().Calls()) != 0 {
+		t.Fatalf("draft must precede delivery: %+v", draft)
+	}
+	calls := mock.slack.Calls()
+	if len(calls) == 0 {
+		t.Fatal("no Slack draft was posted")
+	}
+	var receipt process.NewsletterReviewReceipt
+	err := env.Dex.InvokeRPC(env.Context(t), id, process.NewsletterCampaignFlow{}.ReceiveNewsletterReply, process.NewsletterReviewReply{
+		EventID: uuid.NewString(), TeamID: "T123", ChannelID: "C123", ThreadTimestamp: calls[0].Input.ThreadTimestamp,
+		Timestamp: timestamp, UserID: "UADMIN", Text: message,
+	}, &receipt)
+	if err != nil {
+		t.Fatalf("review newsletter: %v", err)
+	}
+	return receipt
 }
 
 func recentRelease(id int64, name, repository string, at time.Time) github.Release {
@@ -135,6 +177,9 @@ func TestSubscriptionValidationAndDeduplication(t *testing.T) {
 	subscribe(t, env, address, uuid.New())
 	awaitSubscriberCount(t, env, baseline+1)
 	id := startCampaign(t, env, campaignInput())
+	if !reviewCampaign(t, env, id, mock, "approve", "9999999999.000002").Accepted {
+		t.Fatal("approval was not accepted")
+	}
 	report := awaitCampaign(t, env, id, generated.NewsletterStatusCompleted)
 	if report.RecipientCount != baseline+1 || report.SentCount != baseline+1 || len(mock.gmail.SendMessage().Calls()) != int(baseline+1) {
 		t.Fatalf("duplicate subscription delivered more than once: %+v", report)
@@ -155,7 +200,7 @@ func TestNewsletterReleasePagesAndTriggerIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ts := uuid.NewString()
+	ts := fmt.Sprintf("%d.%06d", time.Now().Unix(), time.Now().UnixNano()%1000000)
 	event := sdkgo.TriggerEvent[slack.MessageEvent]{ID: "evt-1", Payload: slack.MessageEvent{TeamID: "T123", ChannelID: "C123", Timestamp: ts, ThreadTimestamp: ts, UserID: "UADMIN", Text: "publish newsletter"}}
 	if !filter(event) {
 		t.Fatal("administrator command should be accepted")
@@ -183,6 +228,9 @@ func TestNewsletterReleasePagesAndTriggerIdentity(t *testing.T) {
 
 	input := process.MapNewsletterTrigger(event)
 	id := startCampaign(t, env, input)
+	if !reviewCampaign(t, env, id, mock, "approve", "9999999999.000002").Accepted {
+		t.Fatal("approval was not accepted")
+	}
 	report := awaitCampaign(t, env, id, generated.NewsletterStatusCompleted)
 	if report.ReleaseCount != 2 || report.RecipientCount != baseline+2 || report.SentCount != baseline+2 || !strings.Contains(report.Report, "connector shipped") {
 		t.Fatalf("wrong campaign result: %+v", report)
@@ -278,7 +326,11 @@ func TestNewsletterGmailBranches(t *testing.T) {
 			baseline := subscriberCount(t, env)
 			subscribe(t, env, "reader"+strings.ReplaceAll(uuid.NewString(), "-", "")+"@example.com", uuid.New())
 			awaitSubscriberCount(t, env, baseline+1)
-			report := awaitCampaign(t, env, startCampaign(t, env, campaignInput()), generated.NewsletterStatusCompleted)
+			id := startCampaign(t, env, campaignInput())
+			if !reviewCampaign(t, env, id, mock, "approve", "9999999999.000002").Accepted {
+				t.Fatal("approval was not accepted")
+			}
+			report := awaitCampaign(t, env, id, generated.NewsletterStatusCompleted)
 			if report.SentCount != tc.sent*(baseline+1) || report.FailedCount != tc.failed*(baseline+1) || report.UnknownCount != tc.unknown*(baseline+1) || len(mock.gmail.SendMessage().Calls()) != int(baseline+1) {
 				t.Fatalf("wrong Gmail branch or duplicate send: %+v", report)
 			}

@@ -69,6 +69,7 @@ func (handler *Handler) GetNewsletter(ctx context.Context, params generated.GetN
 		ReleaseCount: snapshot.ReleaseCount, RecipientCount: snapshot.RecipientCount,
 		SentCount: snapshot.SentCount, FailedCount: snapshot.FailedCount,
 		UnknownCount: snapshot.UnknownCount, Notice: snapshot.Notice,
+		DraftRevision: snapshot.DraftRevision, DraftTimestamp: snapshot.DraftTimestamp,
 	}, nil
 }
 

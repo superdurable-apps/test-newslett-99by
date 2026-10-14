@@ -51,7 +51,7 @@ func Start(t *testing.T, connections worker.Connections) *Env {
 	if flowService == "" || bindAddress == "" || workerAddress == "" {
 		t.Fatal("the test engine is not configured: run the tests with make test-app")
 	}
-	clients := &process.Clients{}
+	clients := &process.Clients{AllowedAdmins: []string{"UADMIN"}}
 	registry, err := dex.NewRegistry(worker.Application(connections, clients))
 	if err != nil {
 		t.Fatalf("register the Flows: %v", err)

@@ -7,7 +7,8 @@ import (
 
 func NewsletterFlow(connections Connections, clients *process.Clients) process.NewsletterCampaignFlow {
 	return process.NewsletterCampaignFlow{
-		GitHub: connections.GitHub, LLM: connections.OpenAI, Gmail: connections.Gmail, Clients: clients,
+		GitHub: connections.GitHub, Slack: connections.Slack, LLM: connections.OpenAI,
+		Gmail: connections.Gmail, AllowedAdmins: clients.AllowedAdmins, Clients: clients,
 	}
 }
 

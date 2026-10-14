@@ -15,7 +15,11 @@
       "modulePath": "github.com/superdurable/dex-connectors-library/connectors/slack",
       "version": "v1.0.0",
       "authMethodId": "",
-      "triggerBindings": [{"triggerName": "channelThreadCreated", "bindingName": "publish-newsletter"}]
+      "operations": ["postThreadReply"],
+      "triggerBindings": [
+        {"triggerName": "channelThreadCreated", "bindingName": "publish-newsletter"},
+        {"triggerName": "threadReplyCreated", "bindingName": "review-newsletter"}
+      ]
     },
     {
       "connectionName": "newsletter-github",
