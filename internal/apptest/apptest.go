@@ -20,6 +20,7 @@ import (
 
 	api "github.com/superdurable/dex-template-basic-process/internal/api"
 	"github.com/superdurable/dex-template-basic-process/internal/api/generated"
+	"github.com/superdurable/dex-template-basic-process/internal/process"
 	"github.com/superdurable/dex-template-basic-process/internal/worker"
 	"github.com/superdurable/dex/blob-cache-go/blobcache"
 	"github.com/superdurable/dex/sdk-go/dex"
@@ -50,7 +51,8 @@ func Start(t *testing.T, connections worker.Connections) *Env {
 	if flowService == "" || bindAddress == "" || workerAddress == "" {
 		t.Fatal("the test engine is not configured: run the tests with make test-app")
 	}
-	registry, err := dex.NewRegistry(worker.Application(connections))
+	clients := &process.Clients{}
+	registry, err := dex.NewRegistry(worker.Application(connections, clients))
 	if err != nil {
 		t.Fatalf("register the Flows: %v", err)
 	}
@@ -79,6 +81,7 @@ func Start(t *testing.T, connections worker.Connections) *Env {
 		t.Fatalf("create the Dex Client: %v", err)
 	}
 	t.Cleanup(func() { _ = client.Close() })
+	clients.Dex = client
 	handler, err := api.NewHandler(client)
 	if err != nil {
 		t.Fatalf("create the API handler: %v", err)

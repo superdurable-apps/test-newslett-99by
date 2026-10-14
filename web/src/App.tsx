@@ -1,74 +1,67 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { getTextSummary, startTextSummary } from './api/generated/sdk.gen';
-import type { TextSummary } from './api/generated/types.gen';
-
-const pollIntervalMs = 1000;
-// The model Step times out after 900 seconds; stop polling shortly after.
-const pollLimitMs = 16 * 60 * 1000;
-const inProgress = new Set<TextSummary['status']>(['pending', 'generating']);
+import { subscribe } from './api/generated/sdk.gen';
 
 export function App() {
-  const [text, setText] = useState('');
-  const [summary, setSummary] = useState<TextSummary | null>(null);
+  const [email, setEmail] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [message, setMessage] = useState('');
   const [error, setError] = useState('');
-  // Each submission replaces the previous one; late responses for older ones are ignored.
   const current = useRef<AbortController | null>(null);
 
   useEffect(() => () => current.current?.abort(), []);
 
-  async function summarize(event: FormEvent) {
+  async function submit(event: FormEvent) {
     event.preventDefault();
     current.current?.abort();
     const controller = new AbortController();
     current.current = controller;
     setSubmitting(true);
-    setSummary(null);
+    setMessage('');
     setError('');
     try {
-      const requestId = crypto.randomUUID();
-      const started = await startTextSummary({ body: { requestId, text }, signal: controller.signal });
-      if (!started.data) throw new Error(started.error?.message ?? 'The summary could not be started.');
-      const deadline = Date.now() + pollLimitMs;
-      for (;;) {
-        const response = await getTextSummary({ path: { summaryId: started.data.summaryId }, signal: controller.signal });
-        if (controller.signal.aborted) return;
-        if (!response.data) throw new Error(response.error?.message ?? 'The summary could not be read.');
-        setSummary(response.data);
-        if (!inProgress.has(response.data.status)) break;
-        if (Date.now() > deadline) throw new Error('The summary is still running. Check the run in Studio.');
-        await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
-      }
+      const result = await subscribe({
+        body: { requestId: crypto.randomUUID(), email: email.trim() },
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted) return;
+      if (!result.data) throw new Error(result.error?.message ?? 'Your subscription could not be saved.');
+      setMessage("You're on the list. Watch your inbox for the next release report.");
+      setEmail('');
     } catch (failure) {
-      if (!controller.signal.aborted) setError(failure instanceof Error ? failure.message : 'The summary failed.');
+      if (!controller.signal.aborted) setError(failure instanceof Error ? failure.message : 'Your subscription could not be saved.');
     } finally {
       if (current.current === controller) setSubmitting(false);
     }
   }
 
   return (
-    <main>
-      <h1>Text Summary</h1>
-      <form onSubmit={summarize}>
-        <label htmlFor="source-text">Text to summarize</label>
-        <textarea id="source-text" rows={8} maxLength={65536} required value={text} onChange={(event) => setText(event.target.value)} />
-        <button type="submit" disabled={submitting || text.trim() === ''}>{submitting ? 'Summarizing…' : 'Summarize'}</button>
-      </form>
-      <section aria-live="polite">
-        {summary && inProgress.has(summary.status) && <p>Generating the summary…</p>}
-        {summary && !inProgress.has(summary.status) && (
-          <>
-            {summary.summary && <p className="summary">{summary.summary}</p>}
-            {summary.notice && <p role="alert">{summary.notice}</p>}
-            <dl>
-              <dt>Status</dt><dd>{summary.status}</dd>
-              <dt>Model</dt><dd>{summary.model || 'Not reported'}</dd>
-              <dt>Tokens</dt><dd>{summary.inputTokens} input, {summary.outputTokens} output, {summary.totalTokens} total</dd>
-            </dl>
-          </>
-        )}
-        {error && <p role="alert">{error}</p>}
+    <main className="page">
+      <section className="hero" aria-labelledby="title">
+        <p className="eyebrow">SUPER DURABLE · RELEASE NOTES</p>
+        <h1 id="title">The week in Dex, delivered.</h1>
+        <p className="intro">A concise digest of releases from <strong>Dex</strong> and the <strong>Dex Connectors Library</strong>, sent when our team publishes a new report.</p>
+        <form onSubmit={submit}>
+          <label htmlFor="subscriber-email">Email address</label>
+          <div className="form-row">
+            <input id="subscriber-email" type="email" autoComplete="email" placeholder="you@example.com" maxLength={254} required value={email} onChange={(event) => setEmail(event.target.value)} />
+            <button type="submit" disabled={submitting}>{submitting ? 'Subscribing…' : 'Subscribe'}</button>
+          </div>
+          <p className="form-hint">One email per subscriber. We only send the release newsletter.</p>
+        </form>
+        <div className="feedback" aria-live="polite">
+          {message && <p className="success">{message}</p>}
+          {error && <p role="alert">{error}</p>}
+        </div>
       </section>
+      <aside className="about">
+        <span className="about-kicker">WHAT YOU'LL GET</span>
+        <h2>Only what shipped.</h2>
+        <p>Each issue looks back seven days across both repositories, explains the releases in plain language, and links to the original notes.</p>
+        <div className="sources">
+          <span>01 <strong>superdurable/dex</strong></span>
+          <span>02 <strong>superdurable/dex-connectors-library</strong></span>
+        </div>
+      </aside>
     </main>
   );
 }

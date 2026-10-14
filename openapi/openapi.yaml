@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
-  title: Dex Application API
-  version: 2.0.0
+  title: Super Durable Newsletter API
+  version: 1.0.0
 paths:
   /api/health:
     get:
@@ -15,42 +15,43 @@ paths:
                 $ref: '#/components/schemas/HealthResponse'
         default:
           $ref: '#/components/responses/Error'
-  /api/text-summaries:
+  /api/subscriptions:
     post:
-      operationId: startTextSummary
-      description: Starts one TextSummaryFlow. Retrying the same requestId returns the same summary.
+      operationId: subscribe
+      description: Accept one visitor email subscription. Repeated submissions of one email retain one subscriber.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/StartTextSummaryRequest'
+              $ref: '#/components/schemas/SubscribeRequest'
       responses:
         '202':
-          description: The summary Flow was started.
+          description: Subscription request accepted for durable processing.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TextSummaryAccepted'
+                $ref: '#/components/schemas/SubscribeAccepted'
         default:
           $ref: '#/components/responses/Error'
-  /api/text-summaries/{summaryId}:
+  /api/newsletters/{campaignId}:
     get:
-      operationId: getTextSummary
+      operationId: getNewsletter
+      description: Read the report and aggregate delivery state of one newsletter campaign.
       parameters:
-        - name: summaryId
+        - name: campaignId
           in: path
           required: true
           schema:
             type: string
-            format: uuid
+            pattern: '^newsletter-[a-f0-9]{64}$'
       responses:
         '200':
-          description: Current or final summary state.
+          description: Current or final campaign state.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TextSummary'
+                $ref: '#/components/schemas/Newsletter'
         default:
           $ref: '#/components/responses/Error'
 components:
@@ -63,46 +64,51 @@ components:
         status:
           type: string
           enum: [ok]
-    StartTextSummaryRequest:
+    SubscribeRequest:
       type: object
       additionalProperties: false
-      required: [requestId, text]
+      required: [requestId, email]
       properties:
         requestId:
-          description: A new UUID for each submission; it identifies the summary.
           type: string
           format: uuid
-        text:
+        email:
           type: string
-          minLength: 1
-          maxLength: 65536
-    TextSummaryAccepted:
+          format: email
+          maxLength: 254
+    SubscribeAccepted:
       type: object
       additionalProperties: false
-      required: [summaryId]
-      properties:
-        summaryId:
-          type: string
-          format: uuid
-    TextSummary:
-      type: object
-      additionalProperties: false
-      required: [status, summary, model, inputTokens, outputTokens, totalTokens, notice]
+      required: [status]
       properties:
         status:
           type: string
-          enum: [pending, generating, completed, truncated, blocked, provider_rejected, invalid_response, defect, invalid_input, unknown]
-        summary:
+          enum: [accepted]
+    Newsletter:
+      type: object
+      additionalProperties: false
+      required: [status, subject, report, releaseCount, recipientCount, sentCount, failedCount, unknownCount, notice]
+      properties:
+        status:
           type: string
-        model:
+          enum: [pending, collecting_releases, release_failed, generation_failed, generation_unknown, sending, completed]
+        subject:
           type: string
-        inputTokens:
+        report:
+          type: string
+        releaseCount:
           type: integer
           format: int64
-        outputTokens:
+        recipientCount:
           type: integer
           format: int64
-        totalTokens:
+        sentCount:
+          type: integer
+          format: int64
+        failedCount:
+          type: integer
+          format: int64
+        unknownCount:
           type: integer
           format: int64
         notice:

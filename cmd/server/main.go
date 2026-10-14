@@ -12,7 +12,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/superdurable/dex-connectors-library/connectors/slack"
 	api "github.com/superdurable/dex-template-basic-process/internal/api"
+	"github.com/superdurable/dex-template-basic-process/internal/process"
 	"github.com/superdurable/dex-template-basic-process/internal/worker"
 )
 
@@ -36,7 +38,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("create OpenAPI handler: %w", err)
 	}
-	server := &http.Server{Addr: ":" + environment("PORT", "8080"), Handler: applicationHandler(apiHandler), ReadHeaderTimeout: 5 * time.Second}
+	server := &http.Server{Addr: ":" + environment("PORT", "8080"), Handler: applicationHandler(apiHandler, worker.TriggerHandler()), ReadHeaderTimeout: 5 * time.Second}
 	workerResult := worker.Start()
 	serverResult := make(chan error, 1)
 	go func() { serverResult <- server.ListenAndServe() }()
@@ -58,9 +60,10 @@ func run() error {
 	return server.Shutdown(shutdown)
 }
 
-func applicationHandler(apiHandler http.Handler) http.Handler {
+func applicationHandler(apiHandler, triggerHandler http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/api/", apiHandler)
+	mux.Handle(slack.RelayedTriggerPath(process.SlackConnectionName), triggerHandler)
 	mux.Handle("/", staticHandler("web/dist"))
 	return logServerErrors(mux)
 }

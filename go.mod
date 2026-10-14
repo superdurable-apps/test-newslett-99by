@@ -7,6 +7,9 @@ require (
 	github.com/go-faster/jx v1.2.0
 	github.com/google/uuid v1.6.0
 	github.com/ogen-go/ogen v1.24.0
+	github.com/superdurable/dex-connectors-library/connectors/github v0.23.0
+	github.com/superdurable/dex-connectors-library/connectors/google/gmail v0.23.0
+	github.com/superdurable/dex-connectors-library/connectors/slack v1.0.0
 	github.com/superdurable/dex-connectors-library/connectors/superdurable/llm v0.22.1
 	github.com/superdurable/dex-connectors-library/sdkgo v0.29.1
 	github.com/superdurable/dex/blob-cache-go v0.1.1
@@ -44,6 +47,7 @@ require (
 	github.com/go-faster/yaml v0.4.6 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
+	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect

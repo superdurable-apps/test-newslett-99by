@@ -5,11 +5,16 @@ import (
 	"github.com/superdurable/dex/sdk-go/dex"
 )
 
-// Application is the single list of the application's Flows with their
-// connections: the Worker and the API tests register exactly this list. List
-// every Flow here and its source file in dex-app.yaml.
-func Application(connections Connections) []dex.Flow {
+func NewsletterFlow(connections Connections, clients *process.Clients) process.NewsletterCampaignFlow {
+	return process.NewsletterCampaignFlow{
+		GitHub: connections.GitHub, LLM: connections.OpenAI, Gmail: connections.Gmail, Clients: clients,
+	}
+}
+
+// Application is the single Flow list shared by the Worker and API tests.
+func Application(connections Connections, clients *process.Clients) []dex.Flow {
 	return []dex.Flow{
-		process.TextSummaryFlow{Connection: connections.SummaryModel},
+		process.SubscriptionRegistryFlow{},
+		NewsletterFlow(connections, clients),
 	}
 }
